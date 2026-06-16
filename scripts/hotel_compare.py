@@ -66,12 +66,15 @@ def main() -> None:
         print(f"  {label}: {lat}, {lon}  ({resolved})")
 
     # 2) search hotels (stdout -> search.json, raw payload -> raw.json)
+    # Google Hotels returns a tighter, more local set when the query names "hotels".
+    # Without it, "downtown Sunnyvale" pulls in a broader regional set (even other cities).
+    query = args.location if "hotel" in args.location.lower() else f"hotels in {args.location}"
     search_json = out_dir / "search.json"
-    print(f"\nSearching hotels: {args.location} | {args.check_in}..{args.check_out} | "
+    print(f"\nSearching hotels: {query} | {args.check_in}..{args.check_out} | "
           f"{args.adults} adults")
     with search_json.open("w") as f:
         subprocess.run(
-            [sys.executable, str(SCRIPTS / "hotel_search.py"), args.location,
+            [sys.executable, str(SCRIPTS / "hotel_search.py"), query,
              "--check-in", args.check_in, "--check-out", args.check_out,
              "--adults", str(args.adults), "--children", str(args.children),
              "--currency", args.currency, "--max", str(args.max),
