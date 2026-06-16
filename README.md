@@ -16,7 +16,6 @@ Data comes from **Google Hotels via [SerpAPI](https://serpapi.com)**. No scrapin
   - **Sortable table** — click any column. Distance, class, rating, room price + total, a value score, and booking links.
 - **Booking links** — deep links to each hotel on Google, Booking.com, and Expedia for your dates.
 - **Directions** — Google Maps walk/drive links from your device's live location (open on your phone for the exact time you'd see in the app). Free, no key.
-- **📍 Use my location** — a button that reads your browser's live position and routes real walk/drive times from where you actually are (OSRM, free, no key), re-sorting the table by walk time. Requires serving over `http://localhost` (browsers block geolocation on `file://`).
 - **Hotels only** — vacation-rental / aggregator listings that Google Hotels mixes in are filtered out by default (`--include-rentals` to keep them).
 - **A CSV** (`hotels.csv`) — same data, spreadsheet-ready.
 
@@ -54,12 +53,7 @@ uv run scripts/hotel_dashboard.py \
 
 Then open `runs/sunnyvale/dashboard.html`.
 
-To use the **📍 Use my location** button (browsers block geolocation on `file://`), serve it over localhost instead:
-
-```bash
-cd runs/sunnyvale && python3 -m http.server 8765
-# then open http://localhost:8765/dashboard.html
-```
+> **Get start coordinates from Google**, not a rough geocoder. In Google Maps, long-press the spot → the exact `lat, lon` appears at the top → use those. A start point that's off by even 0.3 mi throws every walk/drive estimate off. The example coordinates above are Google's geocode of each address.
 
 - Pass `--party` more than once (e.g. a 1-adult and a 2-adult run) to show multiple price columns side by side.
 - The first `--start` is the primary one — it drives sorting, the value score, and routing.
