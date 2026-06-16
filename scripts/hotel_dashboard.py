@@ -88,7 +88,11 @@ def main() -> None:
     )
     ap.add_argument(
         "--route", action="store_true",
-        help="fetch real walking + driving time from the primary start (OSRM, free, no key)",
+        help="fetch walking + driving time estimates from the primary start (OSRM, free, no key)",
+    )
+    ap.add_argument(
+        "--include-rentals", action="store_true",
+        help="keep vacation-rental / aggregator listings (default: hotels only)",
     )
     args = ap.parse_args()
 
@@ -108,8 +112,12 @@ def main() -> None:
                 names.append(n)
 
     rows = []
+    hidden = []
     for name in names:
         base = next((m[name] for _, m in parties if name in m), None)
+        if not args.include_rentals and base.get("type") != "hotel":
+            hidden.append({"name": name, "type": base.get("type", "?")})
+            continue
         gps = base.get("gps_coordinates") or {}
         lat, lon = gps.get("latitude"), gps.get("longitude")
 
@@ -248,6 +256,7 @@ def main() -> None:
         "primary_party": primary_party,
         "primary_start": primary_start["label"],
         "routed": bool(args.route),
+        "hidden": hidden,
     }
     payload = json.dumps({"meta": meta, "rows": rows}, ensure_ascii=False)
     html = HTML_TEMPLATE.replace("/*__DATA__*/", payload)
@@ -258,6 +267,9 @@ def main() -> None:
     print(f"Wrote {out_dir / 'dashboard.html'}")
     print(f"{len(rows)} hotels | starts: {', '.join(s['label'] for s in starts)} "
           f"| parties: {', '.join(party_labels)}")
+    if hidden:
+        print(f"Hid {len(hidden)} non-hotel listing(s): "
+              f"{', '.join(h['name'] + ' [' + h['type'] + ']' for h in hidden)}")
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -337,8 +349,11 @@ document.getElementById('h-sub').textContent =
 document.getElementById('params').textContent =
   `Search: engine=google_hotels · q="hotels in ${M.location}" · check_in=${M.check_in} · check_out=${M.check_out} · adults=2 · currency=${M.currency} · gl=us · hl=en`;
 if(M.routed){const rn=document.createElement('p');rn.className='mt-1';
-  rn.innerHTML=`<b>Walk / Drive</b> = real road time + distance from <b>${pStart}</b>, routed via OpenStreetMap (OSRM). Straight-line columns remain for each start point.`;
+  rn.innerHTML=`<b>Walk* / Drive*</b> = <i>estimates</i> from <b>${pStart}</b> via OpenStreetMap (OSRM) — approximate, for ranking. For the exact time from where you are now, tap a <b>🚶/🚗 Maps</b> Directions link: it opens Google Maps routed from your device's live location (matches your phone).`;
   document.getElementById('params').after(rn);}
+if(M.hidden&&M.hidden.length){const hn=document.createElement('p');hn.className='mt-1 text-amber-600';
+  hn.innerHTML=`<b>${M.hidden.length} non-hotel listing(s) hidden</b> (vacation-rental / aggregator entries from Google Hotels): ${M.hidden.map(h=>h.name+' ['+h.type+']').join(', ')}. Re-run with --include-rentals to show them.`;
+  document.getElementById('params').after(hn);}
 
 // ---- OTA deep links ----
 function ota(r){
@@ -350,6 +365,12 @@ function ota(r){
   };
 }
 const otaColor = {Google:'bg-blue-600', Booking:'bg-indigo-600', Expedia:'bg-amber-600'};
+
+// Google Maps directions from YOUR live location (origin omitted -> device location).
+// On a phone this matches the app exactly. Free, no API key.
+function gmapsDir(r, mode){
+  return `https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=${mode}`;
+}
 
 // ---- summary cards ----
 const priced = ROWS.filter(r => pn(r)!=null);
@@ -390,12 +411,13 @@ function ratingColor(r){
     const radius=6+Math.sqrt((p.reviews||0)/rMax)*16;
     const links=ota(p);
     const linkHtml=Object.entries(links).map(([k,u])=>`<a href="${u}" target="_blank" style="color:#2563eb">${k}</a>`).join(' · ');
+    const dirHtml=`<a href="${gmapsDir(p,'walking')}" target="_blank" style="color:#059669">🚶 Maps</a> · <a href="${gmapsDir(p,'driving')}" target="_blank" style="color:#475569">🚗 Maps</a>`;
     const wk=(p.route&&p.route.walk)||{}, dv=(p.route&&p.route.drive)||{};
     const routeHtml=M.routed&&(wk.min!=null||dv.min!=null)
       ? `<br>🚶 ${wk.min!=null?wk.min+' min':'—'}${wk.mi!=null?` (${wk.mi} mi)`:''} · 🚗 ${dv.min!=null?dv.min+' min':'—'}` : '';
     L.circleMarker([p.lat,p.lon],{radius,color:'#fff',weight:1,fillColor:ratingColor(p.rating),fillOpacity:0.8})
      .addTo(map)
-     .bindPopup(`<b>${p.name}</b><br>${p.rating||'?'}★ (${(p.reviews||0).toLocaleString()})<br>${fmt(pn(p))}/night · ${pdistMi(p)??'?'} mi straight-line${routeHtml}<br>${linkHtml}`);
+     .bindPopup(`<b>${p.name}</b><br>${p.rating||'?'}★ (${(p.reviews||0).toLocaleString()})<br>${fmt(pn(p))}/night · ${pdistMi(p)??'?'} mi straight-line${routeHtml}<br>Directions: ${dirHtml}<br>Book: ${linkHtml}`);
   });
   M.starts.forEach((s,i)=>{
     L.marker([s.lat,s.lon],{title:s.label,
@@ -431,10 +453,10 @@ function ratingColor(r){
 // ---- table ----
 const cols=[{k:'name',label:'Hotel',align:'left'}];
 M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
-if(M.routed){cols.push({k:'walk_min',label:'Walk (min)',num:true},{k:'drive_min',label:'Drive (min)',num:true});}
+if(M.routed){cols.push({k:'walk_min',label:'Walk* (min)',num:true},{k:'drive_min',label:'Drive* (min)',num:true});}
 cols.push({k:'stars',label:'Class',num:true},{k:'rating',label:'Rating',num:true},{k:'reviews',label:'Reviews',num:true});
 M.party_labels.forEach(lb=>{cols.push({k:'pn:'+lb,label:'Room /night',num:true});cols.push({k:'tot:'+lb,label:'Total',num:true});});
-cols.push({k:'value_score',label:'Value',num:true},{k:'book',label:'Book',align:'left'});
+cols.push({k:'value_score',label:'Value',num:true},{k:'directions',label:'Directions',align:'left'},{k:'book',label:'Book',align:'left'});
 
 const getVal=(r,k)=>{
   if(k.startsWith('dist:')) return distMi(r,k.slice(5));
@@ -471,6 +493,9 @@ function render(){
     M.party_labels.forEach(lb=>{const p=(r.prices[lb]||{});
       cells+=`<td class="px-3 py-2 text-right font-semibold">${fmt(p.per_night)}</td><td class="px-3 py-2 text-right text-slate-500">${fmt(p.total)}</td>`;});
     cells+=`<td class="px-3 py-2 text-right ${r.value_score!=null?'text-indigo-600 font-medium':''}">${r.value_score??'—'}</td>`;
+    const dirBtns = `<a href="${gmapsDir(r,'walking')}" target="_blank" rel="noopener" class="ota bg-emerald-600 text-white hover:opacity-80" title="Walking directions from your location">🚶 Maps</a> `
+      + `<a href="${gmapsDir(r,'driving')}" target="_blank" rel="noopener" class="ota bg-slate-600 text-white hover:opacity-80" title="Driving directions from your location">🚗 Maps</a>`;
+    cells+=`<td class="px-3 py-2 text-left whitespace-nowrap">${dirBtns}</td>`;
     const links=ota(r); const linkBtns=Object.entries(links).map(([k,u])=>`<a href="${u}" target="_blank" rel="noopener" class="ota ${otaColor[k]} text-white hover:opacity-80">${k} ↗</a>`).join(' ');
     cells+=`<td class="px-3 py-2 text-left whitespace-nowrap">${linkBtns}</td>`;
     return `<tr class="border-t border-slate-100 ${i%2?'bg-slate-50/40':''} hover:bg-blue-50/40">${cells}</tr>`;
