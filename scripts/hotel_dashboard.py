@@ -260,7 +260,8 @@ def main() -> None:
     }
     payload = json.dumps({"meta": meta, "rows": rows}, ensure_ascii=False)
     html = HTML_TEMPLATE.replace("/*__DATA__*/", payload)
-    html = html.replace("__TITLE__", escape(f"Hotels — {args.location}"))
+    title_loc = " ".join(w[:1].upper() + w[1:] for w in args.location.split())
+    html = html.replace("__TITLE__", escape(f"Hotels — {title_loc}"))
     (out_dir / "dashboard.html").write_text(html, encoding="utf-8")
 
     print(f"Wrote {csv_path}")
@@ -351,7 +352,8 @@ const tot = r => (r.prices[primary]||{}).total;
 const distMi = (r,label) => ((r.distances[label]||{}).mi);
 const pdistMi = r => distMi(r, pStart);
 
-document.getElementById('h-title').textContent = 'Hotels — ' + M.location;
+document.getElementById('h-title').textContent =
+  'Hotels — ' + M.location.replace(/\b\w/g, c=>c.toUpperCase());
 document.getElementById('h-sub').textContent =
   `${M.check_in} → ${M.check_out} (${M.nights} nights) · ${ROWS.length} hotels · room price · start: ${pStart}`;
 document.getElementById('params').textContent =

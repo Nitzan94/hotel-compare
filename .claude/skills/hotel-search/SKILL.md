@@ -11,7 +11,7 @@ Output: `runs/hotel-search/<YYYY-MM-DD>-<slug>/` with `dashboard.html`, `hotels.
 ## Steps
 
 1. **Gather inputs**, asking only for what's missing:
-   - **Location** — where to search (city / neighborhood / landmark), e.g. "downtown Sunnyvale California".
+   - **Location** — **always ask the user where they want to search**, then pass their answer verbatim to `--location`. It's free-form (city / neighborhood / landmark / country): "London", "downtown Sunnyvale California", "near Sagrada Familia Barcelona". Nothing is hardcoded — the search query is built from this input, and it becomes the dashboard title.
    - **Start address** — the point to measure distance from. A real address ("240 S Taaffe St, Sunnyvale, CA"), geocoded via Google. Repeatable for multiple reference points; the first is primary. Never hand-enter coordinates — a start off by even 0.3 mi corrupts every walk/drive number.
    - **Dates** — check-in and check-out (YYYY-MM-DD). Google Hotels requires both; never guess them.
    - **Party** — adults (default 2), children (default 0). Currency defaults to USD.
@@ -26,6 +26,21 @@ Output: `runs/hotel-search/<YYYY-MM-DD>-<slug>/` with `dashboard.html`, `hotels.
    ```
    Pass `--start` again for more reference points, `--no-route` to skip walk/drive routing,
    `--currency` / `--children` / `--max` as needed. It prints the dashboard path.
+
+   `hotel_compare.py` chains three steps; run them individually if you need to:
+   ```
+   # a) geocode the start address -> {lat, lon}
+   uv run scripts/geocode.py "<start address>"
+
+   # b) SEARCH hotels at the user's location (live Google Hotels prices)
+   uv run scripts/hotel_search.py "hotels in <location>" \
+     --check-in YYYY-MM-DD --check-out YYYY-MM-DD --adults N --out search.json
+
+   # c) BUILD the dashboard from the search + geocoded start
+   uv run scripts/hotel_dashboard.py --out-dir <dir> --location "<location>" \
+     --check-in YYYY-MM-DD --check-out YYYY-MM-DD --nights N \
+     --start "<label>" <lat> <lon> --party "Room (N guests)" search.json --route
+   ```
 
 3. **Open and report.** Open the printed `dashboard.html`. Summarize from `hotels.csv`:
    N hotels for the dates, room-price range, and the top 2-3 picks (cheapest, closest, best value)
