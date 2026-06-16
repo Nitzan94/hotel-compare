@@ -29,35 +29,45 @@ Requires [`uv`](https://github.com/astral-sh/uv) (or run with plain `python3` �
 
 ## Use
 
-**1. Fetch prices** (one call per party size):
+One command — pass your **own start address** (any address, anywhere) and your dates. It geocodes the start via Google (so distances are accurate), searches hotels, and builds the dashboard:
 
 ```bash
-uv run scripts/hotel_search.py "hotels in downtown Sunnyvale California" \
+uv run scripts/hotel_compare.py \
+  --location "downtown Sunnyvale California" \
+  --start "240 S Taaffe St, Sunnyvale, CA 94086" \
   --check-in 2026-09-19 --check-out 2026-09-30 \
-  --adults 2 --currency USD --max 30 \
-  --out runs/sunnyvale/raw.json > runs/sunnyvale/out.json
+  --adults 2
 ```
 
-**2. Build the dashboard** (distance from one or more start points):
+It prints the output path; open the `dashboard.html` it names.
+
+- **`--start` is just an address** — it's geocoded for you via Google, so you don't hand-enter coordinates (that was the #1 source of wrong distances). Pass `--start` more than once to compare distance from several points; the first is primary (drives sorting + the value score).
+- `--location` is where to search for hotels (city / neighborhood / landmark).
+- `--adults` / `--children` / `--currency` / `--max` are optional (defaults: 2 / 0 / USD / 30).
+- `--no-route` skips walk/drive routing (faster; straight-line distance only).
+
+The dashboard's walk/drive times come from the free OSRM server and, from an accurately geocoded start, match Google Maps within a couple of minutes. For the exact Google time from where you are *right now*, tap a 🚶/🚗 **Maps** link in any row.
+
+<details>
+<summary>Run the steps manually (geocode → search → dashboard)</summary>
 
 ```bash
-uv run scripts/hotel_dashboard.py \
-  --out-dir runs/sunnyvale \
+# geocode a start address -> {lat, lon}
+uv run scripts/geocode.py "240 S Taaffe St, Sunnyvale, CA 94086"
+
+# fetch prices
+uv run scripts/hotel_search.py "hotels in downtown Sunnyvale California" \
+  --check-in 2026-09-19 --check-out 2026-09-30 --adults 2 --max 30 \
+  --out runs/sunnyvale/raw.json > runs/sunnyvale/out.json
+
+# build the dashboard (coords from the geocode step)
+uv run scripts/hotel_dashboard.py --out-dir runs/sunnyvale \
   --location "Downtown Sunnyvale, CA" \
-  --check-in 2026-09-19 --check-out 2026-09-30 --nights 11 --currency USD \
-  --start "240 S Taaffe St" 37.3701 -122.0347 \
-  --start "Murphy Ave / Caltrain" 37.3779 -122.0312 \
-  --party "Room (2 guests)" runs/sunnyvale/out.json \
-  --route
+  --check-in 2026-09-19 --check-out 2026-09-30 --nights 11 \
+  --start "240 S Taaffe St" 37.3747265 -122.0313455 \
+  --party "Room (2 guests)" runs/sunnyvale/out.json --route
 ```
-
-Then open `runs/sunnyvale/dashboard.html`.
-
-> **Get start coordinates from Google**, not a rough geocoder. In Google Maps, long-press the spot → the exact `lat, lon` appears at the top → use those. A start point that's off by even 0.3 mi throws every walk/drive estimate off. The example coordinates above are Google's geocode of each address.
-
-- Pass `--party` more than once (e.g. a 1-adult and a 2-adult run) to show multiple price columns side by side.
-- The first `--start` is the primary one — it drives sorting, the value score, and routing.
-- `--route` adds **real walking + driving time/distance** from the primary start to each hotel, via the free public OSRM server ([routing.openstreetmap.de](https://routing.openstreetmap.de)) — no key. Omit it to skip routing (straight-line distance only).
+</details>
 
 ## Search parameters
 
