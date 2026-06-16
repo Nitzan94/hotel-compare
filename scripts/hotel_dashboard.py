@@ -312,6 +312,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </section>
   </div>
 
+  <section id="compare-wrap" class="bg-white rounded-xl shadow-sm border border-indigo-200 overflow-hidden mb-6 hidden">
+    <div class="flex items-center justify-between px-4 py-2 bg-indigo-50 border-b border-indigo-100">
+      <h2 class="font-semibold text-indigo-800 text-sm">Compare <span id="cmp-count" class="text-indigo-500"></span></h2>
+      <button id="cmp-clear" class="text-xs text-indigo-600 hover:underline">Clear</button>
+    </div>
+    <div class="overflow-x-auto"><table id="cmp-table" class="w-full text-sm"></table></div>
+  </section>
+
   <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -461,7 +469,7 @@ const getVal=(r,k)=>{
 };
 let sortKey='dist:'+M.starts[0].label, sortDir=1;
 function buildCols(){
-  const cols=[{k:'name',label:'Hotel',align:'left'}];
+  const cols=[{k:'_cmp',label:'',align:'left',nosort:true},{k:'name',label:'Hotel',align:'left'}];
   M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
   if(M.routed){cols.push({k:'walk_min',label:'Walk (min)',num:true},{k:'drive_min',label:'Drive (min)',num:true});}
   cols.push({k:'stars',label:'Class',num:true},{k:'rating',label:'Rating',num:true},{k:'reviews',label:'Reviews',num:true});
@@ -473,9 +481,10 @@ function render(){
   const cols=buildCols();
   const thead=document.getElementById('thead');
   thead.innerHTML='<tr>'+cols.map(c=>{const arrow=sortKey===c.k?(sortDir>0?' ▲':' ▼'):'';
-    return `<th class="sortable px-3 py-2 ${c.align==='left'?'text-left':'text-right'}" data-k="${c.k}">${c.label}${arrow}</th>`;}).join('')+'</tr>';
-  thead.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
-    if(sortKey===k) sortDir*=-1; else {sortKey=k;sortDir=1;} render();});
+    return `<th class="${c.nosort?'':'sortable'} px-3 py-2 ${c.align==='left'?'text-left':'text-right'}" data-k="${c.k}" data-nosort="${c.nosort?1:0}">${c.label}${arrow}</th>`;}).join('')+'</tr>';
+  thead.querySelectorAll('th').forEach(th=>{if(th.dataset.nosort==='1')return;
+    th.onclick=()=>{const k=th.dataset.k;
+    if(sortKey===k) sortDir*=-1; else {sortKey=k;sortDir=1;} render();};});
   const sorted=[...ROWS].sort((a,b)=>{let va=getVal(a,sortKey),vb=getVal(b,sortKey);
     if(typeof va==='string'||typeof vb==='string'){return ((va||'')+'').localeCompare((vb||'')+'')*sortDir;}
     va=va==null?Infinity*sortDir:va; vb=vb==null?Infinity*sortDir:vb; return (va-vb)*sortDir;});
@@ -483,7 +492,10 @@ function render(){
   document.getElementById('tbody').innerHTML=sorted.map((r,i)=>{
     const badges=(r.badges||[]).map(b=>`<span class="badge ${badgeColor[b]||'bg-slate-100 text-slate-600'}">${b}</span>`).join(' ');
     const am=(r.amenities||[]).slice(0,4).map(a=>`<span class="text-[10px] text-slate-400">${a}</span>`).join(' · ');
-    let cells=`<td class="px-3 py-2 text-left"><div class="font-medium text-slate-800">${r.name} ${badges}</div>
+    const checked=selected.has(r.name)?'checked':'';
+    const disabled=(!selected.has(r.name)&&selected.size>=CMP_MAX)?'disabled':'';
+    let cells=`<td class="px-3 py-2 text-center"><input type="checkbox" class="cmp-box accent-indigo-600 cursor-pointer disabled:opacity-30" data-name="${enc(r.name)}" ${checked} ${disabled}></td>`;
+    cells+=`<td class="px-3 py-2 text-left"><div class="font-medium text-slate-800">${r.name} ${badges}</div>
       <div class="text-[11px] text-slate-400">${r.type||''}</div>${am?`<div class="mt-0.5">${am}</div>`:''}</td>`;
     M.starts.forEach(s=>{const d=distMi(r,s.label);
       cells+=`<td class="px-3 py-2 text-right ${d!=null&&d<0.6?'text-blue-600 font-semibold':''}">${d??'—'}</td>`;});
@@ -503,6 +515,53 @@ function render(){
     cells+=`<td class="px-3 py-2 text-left whitespace-nowrap">${linkBtns}</td>`;
     return `<tr class="border-t border-slate-100 ${i%2?'bg-slate-50/40':''} hover:bg-blue-50/40">${cells}</tr>`;
   }).join('');
+  document.querySelectorAll('.cmp-box').forEach(box=>box.onchange=()=>{
+    const name=decodeURIComponent(box.dataset.name);
+    if(box.checked) selected.add(name); else selected.delete(name);
+    render(); renderCompare();
+  });
+}
+
+// ---- compare panel (pick 1–3 hotels) ----
+const CMP_MAX=3;
+const selected=new Set();
+const byName=Object.fromEntries(ROWS.map(r=>[r.name,r]));
+document.getElementById('cmp-clear').onclick=()=>{selected.clear();render();renderCompare();};
+function renderCompare(){
+  const wrap=document.getElementById('compare-wrap');
+  const picks=[...selected].map(n=>byName[n]).filter(Boolean);
+  if(!picks.length){wrap.classList.add('hidden');return;}
+  wrap.classList.remove('hidden');
+  document.getElementById('cmp-count').textContent=`(${picks.length}/${CMP_MAX})`;
+  // each attribute is a row; "best" picks the winning column to highlight
+  const rowsDef=[
+    {label:'Room /night', get:r=>pn(r), fmt:v=>fmt(v), best:'min'},
+    {label:`Total (${M.nights}n)`, get:r=>tot(r), fmt:v=>fmt(v), best:'min'},
+    ...M.starts.map(s=>({label:`Dist — ${s.label} (mi)`, get:r=>distMi(r,s.label), fmt:v=>v==null?'—':v+' mi', best:'min'})),
+    ...(M.routed?[
+      {label:'Walk (min)', get:r=>(r.route&&r.route.walk||{}).min, fmt:v=>v==null?'—':v+' min', best:'min'},
+      {label:'Drive (min)', get:r=>(r.route&&r.route.drive||{}).min, fmt:v=>v==null?'—':v+' min', best:'min'},
+    ]:[]),
+    {label:'Class', get:r=>r.stars, fmt:v=>v?v+'★':'—', best:'max'},
+    {label:'Rating', get:r=>r.rating, fmt:v=>v==null?'—':v, best:'max'},
+    {label:'Reviews', get:r=>r.reviews, fmt:v=>v?v.toLocaleString():'—', best:'max'},
+    {label:'Value score', get:r=>r.value_score, fmt:v=>v==null?'—':v, best:'max'},
+    {label:'Amenities', get:r=>(r.amenities||[]).join(' · ')||'—', fmt:v=>v, best:null},
+    {label:'Book', get:r=>r, fmt:r=>{const l=ota(r);return Object.entries(l).map(([k,u])=>`<a href="${u}" target="_blank" rel="noopener" class="ota ${otaColor[k]} text-white hover:opacity-80">${k} ↗</a>`).join(' ');}, best:null},
+  ];
+  let html=`<thead><tr class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><th class="px-3 py-2 text-left"></th>`
+    +picks.map(r=>`<th class="px-3 py-2 text-left font-semibold text-slate-800 normal-case text-sm">${r.name} ${(r.badges||[]).map(b=>`<span class="badge bg-slate-100 text-slate-500">${b}</span>`).join('')}</th>`).join('')+`</tr></thead><tbody>`;
+  rowsDef.forEach((d,ri)=>{
+    const vals=picks.map(d.get);
+    let win=-1;
+    if(d.best){const nums=vals.map(v=>typeof v==='number'?v:null).filter(v=>v!=null);
+      if(nums.length){const target=d.best==='min'?Math.min(...nums):Math.max(...nums);
+        win=vals.findIndex(v=>v===target);}}
+    html+=`<tr class="border-t border-slate-100 ${ri%2?'bg-slate-50/40':''}"><td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${d.label}</td>`
+      +vals.map((v,ci)=>`<td class="px-3 py-2 ${ci===win?'text-emerald-700 font-semibold':'text-slate-700'}">${d.fmt(v)}</td>`).join('')+`</tr>`;
+  });
+  html+=`</tbody>`;
+  document.getElementById('cmp-table').innerHTML=html;
 }
 render();
 </script>

@@ -14,6 +14,7 @@ Data comes from **Google Hotels via [SerpAPI](https://serpapi.com)**. No scrapin
   - **Map** (Leaflet + OpenStreetMap) — every hotel + your start points, colored by rating, sized by reviews.
   - **Scatter** — price vs. distance, so cheap-and-close hotels sit in the lower-left.
   - **Sortable table** — click any column. Distance, class, rating, room price + total, a value score, and booking links.
+  - **Compare panel** — tick 1-3 rows to get a side-by-side card (price, distance, walk/drive, rating, value, amenities, booking links) with the best cell per attribute highlighted.
 - **Booking links** — deep links to each hotel on Google, Booking.com, and Expedia for your dates.
 - **Directions** — Google Maps walk/drive links from your device's live location (open on your phone for the exact time you'd see in the app). Free, no key.
 - **Hotels only** — vacation-rental / aggregator listings that Google Hotels mixes in are filtered out by default (`--include-rentals` to keep them).

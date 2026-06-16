@@ -34,6 +34,7 @@ Output: `runs/hotel-search/<YYYY-MM-DD>-<slug>/` with `dashboard.html`, `hotels.
 ## What the dashboard contains
 
 - Sortable table: distance from each start, walk/drive minutes, class, rating, room price + total, value score, booking + directions links.
+- Compare panel: tick 1-3 rows for a side-by-side card (price, total, distance, walk/drive, class, rating, reviews, value, amenities, book links) with the best cell per attribute highlighted.
 - Leaflet map (hotels + start points) and a price-vs-distance scatter.
 - Booking deep links (Google / Booking.com / Expedia) and 🚶/🚗 Google Maps directions links from the viewer's live location.
 
