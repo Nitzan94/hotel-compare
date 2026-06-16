@@ -6,8 +6,26 @@ import argparse
 import csv
 import json
 import math
+import sys
+import time
+import urllib.error
+import urllib.request
 from html import escape
 from pathlib import Path
+
+OSRM_BASE = "https://routing.openstreetmap.de/routed-{profile}/route/v1/driving"
+
+
+def osrm_route(profile: str, slon, slat, hlon, hlat) -> dict | None:
+    """Real road distance/duration from (slon,slat) to (hlon,hlat). profile: foot|car."""
+    url = f"{OSRM_BASE.format(profile=profile)}/{slon},{slat};{hlon},{hlat}?overview=false"
+    req = urllib.request.Request(url, headers={"User-Agent": "hotel-compare/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    if data.get("code") != "Ok" or not data.get("routes"):
+        return None
+    rt = data["routes"][0]
+    return {"mi": round(rt["distance"] / 1609.34, 2), "min": round(rt["duration"] / 60)}
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -68,6 +86,10 @@ def main() -> None:
     ap.add_argument(
         "--party", action="append", nargs=2, metavar=("LABEL", "FILE"), required=True,
     )
+    ap.add_argument(
+        "--route", action="store_true",
+        help="fetch real walking + driving time from the primary start (OSRM, free, no key)",
+    )
     args = ap.parse_args()
 
     starts = [
@@ -122,6 +144,36 @@ def main() -> None:
             "prices": prices,
         })
 
+    # --- optional real walking/driving routes from the primary start (free OSRM) ---
+    if args.route:
+        ok, failures = 0, []
+        for r in rows:
+            if r["lat"] is None or r["lon"] is None:
+                r["route"] = None
+                continue
+            try:
+                walk = osrm_route("foot", primary_start["lon"], primary_start["lat"], r["lon"], r["lat"])
+                drive = osrm_route("car", primary_start["lon"], primary_start["lat"], r["lon"], r["lat"])
+                r["route"] = {"walk": walk, "drive": drive}
+                ok += 1
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                r["route"] = None
+                failures.append(f"{r['name']}: {e}")
+            time.sleep(0.1)  # be polite to the public routing server
+        if ok == 0:
+            sys.exit(
+                "FATAL: routing server unreachable for every hotel "
+                f"({OSRM_BASE}). First error: {failures[0] if failures else 'unknown'}. "
+                "Re-run without --route to skip routing."
+            )
+        if failures:
+            print(f"WARNING: routing failed for {len(failures)} hotel(s):", file=sys.stderr)
+            for f in failures:
+                print(f"  - {f}", file=sys.stderr)
+    else:
+        for r in rows:
+            r["route"] = None
+
     def pn(r):
         return r["prices"].get(primary_party, {}).get("per_night")
 
@@ -161,6 +213,12 @@ def main() -> None:
         header = ["name", "stars", "rating", "reviews"]
         for s in starts:
             header.append(f"dist_mi ({s['label']})")
+        if args.route:
+            header += [
+                f"walk_min (from {primary_start['label']})",
+                f"walk_mi (from {primary_start['label']})",
+                f"drive_min (from {primary_start['label']})",
+            ]
         for label in party_labels:
             header += [f"{label} $/night", f"{label} total ({args.nights}n)"]
         header += ["value_score", "badges", "lat", "lon", "link"]
@@ -169,6 +227,10 @@ def main() -> None:
             row = [r["name"], r["stars"], r["rating"], r["reviews"]]
             for s in starts:
                 row.append(r["distances"][s["label"]]["mi"])
+            if args.route:
+                rt = r.get("route") or {}
+                walk, drive = rt.get("walk") or {}, rt.get("drive") or {}
+                row += [walk.get("min"), walk.get("mi"), drive.get("min")]
             for label in party_labels:
                 row += [r["prices"][label]["per_night"], r["prices"][label]["total"]]
             row += [r["value_score"], "|".join(r["badges"]), r["lat"], r["lon"], r["link"]]
@@ -185,6 +247,7 @@ def main() -> None:
         "party_labels": party_labels,
         "primary_party": primary_party,
         "primary_start": primary_start["label"],
+        "routed": bool(args.route),
     }
     payload = json.dumps({"meta": meta, "rows": rows}, ensure_ascii=False)
     html = HTML_TEMPLATE.replace("/*__DATA__*/", payload)
@@ -273,6 +336,9 @@ document.getElementById('h-sub').textContent =
   `${M.check_in} → ${M.check_out} (${M.nights} nights) · ${ROWS.length} hotels · room price · start: ${pStart}`;
 document.getElementById('params').textContent =
   `Search: engine=google_hotels · q="hotels in ${M.location}" · check_in=${M.check_in} · check_out=${M.check_out} · adults=2 · currency=${M.currency} · gl=us · hl=en`;
+if(M.routed){const rn=document.createElement('p');rn.className='mt-1';
+  rn.innerHTML=`<b>Walk / Drive</b> = real road time + distance from <b>${pStart}</b>, routed via OpenStreetMap (OSRM). Straight-line columns remain for each start point.`;
+  document.getElementById('params').after(rn);}
 
 // ---- OTA deep links ----
 function ota(r){
@@ -324,9 +390,12 @@ function ratingColor(r){
     const radius=6+Math.sqrt((p.reviews||0)/rMax)*16;
     const links=ota(p);
     const linkHtml=Object.entries(links).map(([k,u])=>`<a href="${u}" target="_blank" style="color:#2563eb">${k}</a>`).join(' · ');
+    const wk=(p.route&&p.route.walk)||{}, dv=(p.route&&p.route.drive)||{};
+    const routeHtml=M.routed&&(wk.min!=null||dv.min!=null)
+      ? `<br>🚶 ${wk.min!=null?wk.min+' min':'—'}${wk.mi!=null?` (${wk.mi} mi)`:''} · 🚗 ${dv.min!=null?dv.min+' min':'—'}` : '';
     L.circleMarker([p.lat,p.lon],{radius,color:'#fff',weight:1,fillColor:ratingColor(p.rating),fillOpacity:0.8})
      .addTo(map)
-     .bindPopup(`<b>${p.name}</b><br>${p.rating||'?'}★ (${(p.reviews||0).toLocaleString()})<br>${fmt(pn(p))}/night · ${pdistMi(p)??'?'} mi<br>${linkHtml}`);
+     .bindPopup(`<b>${p.name}</b><br>${p.rating||'?'}★ (${(p.reviews||0).toLocaleString()})<br>${fmt(pn(p))}/night · ${pdistMi(p)??'?'} mi straight-line${routeHtml}<br>${linkHtml}`);
   });
   M.starts.forEach((s,i)=>{
     L.marker([s.lat,s.lon],{title:s.label,
@@ -362,12 +431,15 @@ function ratingColor(r){
 // ---- table ----
 const cols=[{k:'name',label:'Hotel',align:'left'}];
 M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
+if(M.routed){cols.push({k:'walk_min',label:'Walk (min)',num:true},{k:'drive_min',label:'Drive (min)',num:true});}
 cols.push({k:'stars',label:'Class',num:true},{k:'rating',label:'Rating',num:true},{k:'reviews',label:'Reviews',num:true});
 M.party_labels.forEach(lb=>{cols.push({k:'pn:'+lb,label:'Room /night',num:true});cols.push({k:'tot:'+lb,label:'Total',num:true});});
 cols.push({k:'value_score',label:'Value',num:true},{k:'book',label:'Book',align:'left'});
 
 const getVal=(r,k)=>{
   if(k.startsWith('dist:')) return distMi(r,k.slice(5));
+  if(k==='walk_min') return (r.route&&r.route.walk||{}).min;
+  if(k==='drive_min') return (r.route&&r.route.drive||{}).min;
   if(k.startsWith('pn:')) return (r.prices[k.slice(3)]||{}).per_night;
   if(k.startsWith('tot:')) return (r.prices[k.slice(4)]||{}).total;
   return r[k];
@@ -387,9 +459,12 @@ function render(){
     const badges=(r.badges||[]).map(b=>`<span class="badge ${badgeColor[b]||'bg-slate-100 text-slate-600'}">${b}</span>`).join(' ');
     const am=(r.amenities||[]).slice(0,4).map(a=>`<span class="text-[10px] text-slate-400">${a}</span>`).join(' · ');
     let cells=`<td class="px-3 py-2 text-left"><div class="font-medium text-slate-800">${r.name} ${badges}</div>
-      <div class="text-[11px] text-slate-400">${r.type||''}${r.walk?(' · '+r.walk+' walk'):''}</div>${am?`<div class="mt-0.5">${am}</div>`:''}</td>`;
+      <div class="text-[11px] text-slate-400">${r.type||''}</div>${am?`<div class="mt-0.5">${am}</div>`:''}</td>`;
     M.starts.forEach(s=>{const d=distMi(r,s.label);
       cells+=`<td class="px-3 py-2 text-right ${d!=null&&d<0.6?'text-blue-600 font-semibold':''}">${d??'—'}</td>`;});
+    if(M.routed){const wk=(r.route&&r.route.walk)||{}, dv=(r.route&&r.route.drive)||{};
+      cells+=`<td class="px-3 py-2 text-right ${wk.min!=null&&wk.min<=15?'text-emerald-600 font-semibold':''}">${wk.min!=null?wk.min+(wk.mi!=null?` <span class="text-[10px] text-slate-400">${wk.mi}mi</span>`:''):'—'}</td>`;
+      cells+=`<td class="px-3 py-2 text-right">${dv.min!=null?dv.min:'—'}</td>`;}
     cells+=`<td class="px-3 py-2 text-right">${r.stars?r.stars+'★':'—'}</td>`;
     cells+=`<td class="px-3 py-2 text-right">${r.rating??'—'}</td>`;
     cells+=`<td class="px-3 py-2 text-right text-slate-400">${r.reviews?r.reviews.toLocaleString():'—'}</td>`;

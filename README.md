@@ -7,7 +7,8 @@ Data comes from **Google Hotels via [SerpAPI](https://serpapi.com)**. No scrapin
 ## What you get
 
 - **Live prices** for your exact check-in/check-out dates and party size.
-- **Distance** from one or more start points (an address, a landmark, a station) — haversine, ranked.
+- **Distance** from one or more start points (an address, a landmark, a station) — straight-line, ranked.
+- **Real walking + driving time** from your start point (with `--route`) — routed over the actual street network, free, no key.
 - **A dashboard** (`dashboard.html`) — self-contained, opens in any browser:
   - Summary cards: nightly range, cheapest, closest, top-rated.
   - **Map** (Leaflet + OpenStreetMap) — every hotel + your start points, colored by rating, sized by reviews.
@@ -44,12 +45,15 @@ uv run scripts/hotel_dashboard.py \
   --check-in 2026-09-19 --check-out 2026-09-30 --nights 11 --currency USD \
   --start "240 S Taaffe St" 37.3701 -122.0347 \
   --start "Murphy Ave / Caltrain" 37.3779 -122.0312 \
-  --party "Room (2 guests)" runs/sunnyvale/out.json
+  --party "Room (2 guests)" runs/sunnyvale/out.json \
+  --route
 ```
 
 Then open `runs/sunnyvale/dashboard.html`.
 
-Pass `--party` more than once (e.g. a 1-adult and a 2-adult run) to show multiple price columns side by side. The first `--start` is the primary one — it drives sorting and the value score.
+- Pass `--party` more than once (e.g. a 1-adult and a 2-adult run) to show multiple price columns side by side.
+- The first `--start` is the primary one — it drives sorting, the value score, and routing.
+- `--route` adds **real walking + driving time/distance** from the primary start to each hotel, via the free public OSRM server ([routing.openstreetmap.de](https://routing.openstreetmap.de)) — no key. Omit it to skip routing (straight-line distance only).
 
 ## Search parameters
 
