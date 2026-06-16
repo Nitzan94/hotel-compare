@@ -69,6 +69,10 @@ uv run scripts/hotel_dashboard.py --out-dir runs/sunnyvale \
 ```
 </details>
 
+## Claude Code skill
+
+This repo ships a [Claude Code](https://claude.com/claude-code) skill at `.claude/skills/hotel-search/`. Open the repo in Claude Code and ask in plain language — "find hotels near 240 S Taaffe St for Sep 19-30, 2 adults" — and it gathers the inputs, runs the pipeline, and summarizes the picks. The skill is optional; the CLI above works on its own.
+
 ## Search parameters
 
 `hotel_search.py` sends these to SerpAPI's `google_hotels` engine:
