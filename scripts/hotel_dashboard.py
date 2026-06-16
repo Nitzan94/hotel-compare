@@ -295,6 +295,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <header class="mb-6">
     <h1 id="h-title" class="text-2xl font-bold text-slate-900"></h1>
     <p id="h-sub" class="text-sm text-slate-500 mt-1"></p>
+    <div class="mt-3 flex items-center gap-3 flex-wrap">
+      <button id="geo-btn" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">📍 Use my location (live walk/drive)</button>
+      <span id="geo-status" class="text-xs text-slate-500"></span>
+    </div>
   </header>
 
   <section id="cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"></section>
@@ -403,7 +407,7 @@ function ratingColor(r){
   const pts = ROWS.filter(r=>r.lat!=null && r.lon!=null);
   const allLat=[...pts.map(p=>p.lat), ...M.starts.map(s=>s.lat)];
   const allLon=[...pts.map(p=>p.lon), ...M.starts.map(s=>s.lon)];
-  const map=L.map('map');
+  const map=L.map('map'); mapRef=map;
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     {maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
   const rMax=Math.max(...pts.map(p=>p.reviews||0),1);
@@ -450,24 +454,70 @@ function ratingColor(r){
   document.getElementById('scatter').innerHTML=g;
 })();
 
-// ---- table ----
-const cols=[{k:'name',label:'Hotel',align:'left'}];
-M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
-if(M.routed){cols.push({k:'walk_min',label:'Walk* (min)',num:true},{k:'drive_min',label:'Drive* (min)',num:true});}
-cols.push({k:'stars',label:'Class',num:true},{k:'rating',label:'Rating',num:true},{k:'reviews',label:'Reviews',num:true});
-M.party_labels.forEach(lb=>{cols.push({k:'pn:'+lb,label:'Room /night',num:true});cols.push({k:'tot:'+lb,label:'Total',num:true});});
-cols.push({k:'value_score',label:'Value',num:true},{k:'directions',label:'Directions',align:'left'},{k:'book',label:'Book',align:'left'});
+// ---- geolocation: live walk/drive from where you are (free, browser-side OSRM) ----
+let mapRef=null, liveMarker=null;
+function hav(a,b,c,e){const R=3958.8,p1=a*Math.PI/180,p2=c*Math.PI/180,dp=(c-a)*Math.PI/180,dl=(e-b)*Math.PI/180;
+  const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return R*2*Math.asin(Math.sqrt(x));}
+async function osrmBrowser(profile,slon,slat,hlon,hlat){
+  const url=`https://routing.openstreetmap.de/routed-${profile}/route/v1/driving/${slon},${slat};${hlon},${hlat}?overview=false`;
+  try{const r=await fetch(url);if(!r.ok)return null;const d=await r.json();
+    if(d.code!=='Ok'||!d.routes||!d.routes.length)return null;const rt=d.routes[0];
+    return {mi:+(rt.distance/1609.34).toFixed(2),min:Math.round(rt.duration/60)};}catch(e){return null;}
+}
+async function fetchLiveRoutes(loc){
+  const pts=ROWS.filter(r=>r.lat!=null&&r.lon!=null);
+  const queue=[...pts];let done=0;
+  async function worker(){while(queue.length){const r=queue.shift();
+    const [walk,drive]=await Promise.all([
+      osrmBrowser('foot',loc.lon,loc.lat,r.lon,r.lat),
+      osrmBrowser('car',loc.lon,loc.lat,r.lon,r.lat)]);
+    r.live={walk,drive,dist_mi:+hav(loc.lat,loc.lon,r.lat,r.lon).toFixed(2)};
+    done++;setGeoStatus(`Routing from your location… ${done}/${pts.length}`);}}
+  await Promise.all([worker(),worker(),worker(),worker()]);
+}
+function setGeoStatus(t){document.getElementById('geo-status').innerHTML=t;}
+document.getElementById('geo-btn').onclick=()=>{
+  if(!navigator.geolocation){setGeoStatus('⚠️ Geolocation not supported by this browser.');return;}
+  setGeoStatus('Locating you…');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const loc={lat:pos.coords.latitude,lon:pos.coords.longitude};
+    setGeoStatus(`Your location: ${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)} — routing…`);
+    if(mapRef){if(liveMarker)mapRef.removeLayer(liveMarker);
+      liveMarker=L.marker([loc.lat,loc.lon],{icon:L.divIcon({className:'',html:'<div style="font-size:24px;line-height:24px">📍</div>',iconSize:[24,24],iconAnchor:[12,24]})}).addTo(mapRef).bindPopup('<b>You are here</b>');
+      mapRef.setView([loc.lat,loc.lon],14);}
+    await fetchLiveRoutes(loc);
+    M.routed=true;M.routedLive=true;sortKey='walk_min';sortDir=1;
+    setGeoStatus(`✅ Routed from your location (${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}) · OSRM walk/drive · tap 🚶/🚗 Maps for Google's exact time.`);
+    render();
+  },err=>{
+    const hint=location.protocol==='file:'?' — open this page via http://localhost (geolocation is blocked on file://).':'';
+    setGeoStatus(`⚠️ ${err.message}${hint}`);
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+};
 
+// ---- table ----
+const liveSrc=r=>(M.routedLive?(r.live||{}):(r.route||{}));
 const getVal=(r,k)=>{
   if(k.startsWith('dist:')) return distMi(r,k.slice(5));
-  if(k==='walk_min') return (r.route&&r.route.walk||{}).min;
-  if(k==='drive_min') return (r.route&&r.route.drive||{}).min;
+  if(k==='walk_min') return (liveSrc(r).walk||{}).min;
+  if(k==='drive_min') return (liveSrc(r).drive||{}).min;
   if(k.startsWith('pn:')) return (r.prices[k.slice(3)]||{}).per_night;
   if(k.startsWith('tot:')) return (r.prices[k.slice(4)]||{}).total;
   return r[k];
 };
 let sortKey='dist:'+M.starts[0].label, sortDir=1;
+function buildCols(){
+  const wlab=M.routedLive?'Walk·you (min)':'Walk* (min)', dlab=M.routedLive?'Drive·you (min)':'Drive* (min)';
+  const cols=[{k:'name',label:'Hotel',align:'left'}];
+  M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
+  if(M.routed||M.routedLive){cols.push({k:'walk_min',label:wlab,num:true},{k:'drive_min',label:dlab,num:true});}
+  cols.push({k:'stars',label:'Class',num:true},{k:'rating',label:'Rating',num:true},{k:'reviews',label:'Reviews',num:true});
+  M.party_labels.forEach(lb=>{cols.push({k:'pn:'+lb,label:'Room /night',num:true});cols.push({k:'tot:'+lb,label:'Total',num:true});});
+  cols.push({k:'value_score',label:'Value',num:true},{k:'directions',label:'Directions',align:'left'},{k:'book',label:'Book',align:'left'});
+  return cols;
+}
 function render(){
+  const cols=buildCols();
   const thead=document.getElementById('thead');
   thead.innerHTML='<tr>'+cols.map(c=>{const arrow=sortKey===c.k?(sortDir>0?' ▲':' ▼'):'';
     return `<th class="sortable px-3 py-2 ${c.align==='left'?'text-left':'text-right'}" data-k="${c.k}">${c.label}${arrow}</th>`;}).join('')+'</tr>';
@@ -484,7 +534,7 @@ function render(){
       <div class="text-[11px] text-slate-400">${r.type||''}</div>${am?`<div class="mt-0.5">${am}</div>`:''}</td>`;
     M.starts.forEach(s=>{const d=distMi(r,s.label);
       cells+=`<td class="px-3 py-2 text-right ${d!=null&&d<0.6?'text-blue-600 font-semibold':''}">${d??'—'}</td>`;});
-    if(M.routed){const wk=(r.route&&r.route.walk)||{}, dv=(r.route&&r.route.drive)||{};
+    if(M.routed||M.routedLive){const src=liveSrc(r),wk=src.walk||{},dv=src.drive||{};
       cells+=`<td class="px-3 py-2 text-right ${wk.min!=null&&wk.min<=15?'text-emerald-600 font-semibold':''}">${wk.min!=null?wk.min+(wk.mi!=null?` <span class="text-[10px] text-slate-400">${wk.mi}mi</span>`:''):'—'}</td>`;
       cells+=`<td class="px-3 py-2 text-right">${dv.min!=null?dv.min:'—'}</td>`;}
     cells+=`<td class="px-3 py-2 text-right">${r.stars?r.stars+'★':'—'}</td>`;
