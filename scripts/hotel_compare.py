@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import re
 import subprocess
 import sys
@@ -20,17 +21,52 @@ def slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:40] or "run"
 
 
+def build_dashboard(out_dir, location, check_in, check_out, nights, currency,
+                    starts, party, route, search_json):
+    """Invoke hotel_dashboard.py. Local work + free OSRM routing only — no paid API calls."""
+    cmd = [sys.executable, str(SCRIPTS / "hotel_dashboard.py"),
+           "--out-dir", str(out_dir), "--location", location,
+           "--check-in", check_in, "--check-out", check_out,
+           "--nights", str(nights), "--currency", currency]
+    for label, lat, lon in starts:
+        cmd += ["--start", label, str(lat), str(lon)]
+    cmd += ["--party", party, str(search_json)]
+    if route:
+        cmd += ["--route"]
+    subprocess.run(cmd, check=True)
+
+
+def rebuild_from(run_dir: Path) -> None:
+    """Regenerate the dashboard from a saved run (run.json + search.json). No API credits."""
+    recipe = run_dir / "run.json"
+    if not recipe.exists():
+        sys.exit(f"FATAL: no run.json in {run_dir} — only runs created with the current "
+                 "hotel_compare.py can be rebuilt. Run a fresh search once to create it.")
+    r = json.loads(recipe.read_text())
+    search_json = run_dir / r.get("search_json", "search.json")
+    if not search_json.exists():
+        sys.exit(f"FATAL: saved search data missing: {search_json}")
+    print(f"Rebuilding from {run_dir} (no API calls)...")
+    build_dashboard(run_dir, r["location"], r["check_in"], r["check_out"], r["nights"],
+                    r["currency"], [tuple(s) for s in r["starts"]], r["party"],
+                    r["route"], search_json)
+    print(f"\nDone. Open: {run_dir / 'dashboard.html'}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Search hotels near a place and build a comparison dashboard, "
         "anchored to one or more start addresses (geocoded via Google)."
     )
-    ap.add_argument("--location", required=True,
+    ap.add_argument("--rebuild", metavar="DIR",
+                    help="rebuild the dashboard from a saved run dir (reads run.json + "
+                    "search.json; no API calls). Skips all search flags below.")
+    ap.add_argument("--location",
                     help='where to search, e.g. "downtown Sunnyvale California"')
-    ap.add_argument("--start", action="append", required=True, metavar="ADDRESS",
+    ap.add_argument("--start", action="append", metavar="ADDRESS",
                     help="start address (repeatable; first is primary). e.g. \"240 S Taaffe St, Sunnyvale, CA\"")
-    ap.add_argument("--check-in", required=True, help="YYYY-MM-DD")
-    ap.add_argument("--check-out", required=True, help="YYYY-MM-DD")
+    ap.add_argument("--check-in", help="YYYY-MM-DD")
+    ap.add_argument("--check-out", help="YYYY-MM-DD")
     ap.add_argument("--adults", type=int, default=2)
     ap.add_argument("--children", type=int, default=0)
     ap.add_argument("--currency", default="USD")
@@ -39,6 +75,16 @@ def main() -> None:
     ap.add_argument("--no-route", action="store_true",
                     help="skip walk/drive routing (faster, straight-line distance only)")
     args = ap.parse_args()
+
+    # Free path: rebuild a saved run, no geocode/search calls.
+    if args.rebuild:
+        rebuild_from(Path(args.rebuild))
+        return
+
+    missing = [n for n, v in (("--location", args.location), ("--start", args.start),
+               ("--check-in", args.check_in), ("--check-out", args.check_out)) if not v]
+    if missing:
+        ap.error("required (unless --rebuild): " + ", ".join(missing))
 
     try:
         ci = dt.date.fromisoformat(args.check_in)
@@ -82,20 +128,21 @@ def main() -> None:
             stdout=f, check=True,
         )
 
-    # 3) build the dashboard, anchored to the geocoded start(s)
+    # 3) save the rebuild recipe so the dashboard can be regenerated later for free
     party = f"Room ({args.adults} guests)" if not args.children else \
         f"Room ({args.adults}a+{args.children}c)"
-    cmd = [sys.executable, str(SCRIPTS / "hotel_dashboard.py"),
-           "--out-dir", str(out_dir), "--location", args.location,
-           "--check-in", args.check_in, "--check-out", args.check_out,
-           "--nights", str(nights), "--currency", args.currency]
-    for label, lat, lon in starts:
-        cmd += ["--start", label, str(lat), str(lon)]
-    cmd += ["--party", party, str(search_json)]
-    if not args.no_route:
-        cmd += ["--route"]
+    route = not args.no_route
+    (out_dir / "run.json").write_text(json.dumps({
+        "location": args.location, "check_in": args.check_in, "check_out": args.check_out,
+        "nights": nights, "currency": args.currency, "party": party, "route": route,
+        "starts": [[label, lat, lon] for label, lat, lon in starts],
+        "search_json": "search.json",
+    }, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # 4) build the dashboard, anchored to the geocoded start(s)
     print("\nBuilding dashboard...")
-    subprocess.run(cmd, check=True)
+    build_dashboard(out_dir, args.location, args.check_in, args.check_out, nights,
+                    args.currency, starts, party, route, search_json)
 
     print(f"\nDone. Open: {out_dir / 'dashboard.html'}")
 

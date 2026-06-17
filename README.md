@@ -15,6 +15,7 @@ Data comes from **Google Hotels via [SerpAPI](https://serpapi.com)**. No scrapin
   - **Scatter** — price vs. distance, so cheap-and-close hotels sit in the lower-left.
   - **Sortable table** — click any column. Distance, class, rating, room price + total, a value score, and booking links.
   - **Compare panel** — tick 1-3 rows to get a side-by-side card (price, distance, walk/drive, rating, value, amenities, booking links) with the best cell per attribute highlighted.
+- **Share / export** — one-tap **WhatsApp** and **Email** buttons (share the list as text, in the table's current sort order), plus **Copy list** and **Download CSV**. All client-side, no key, no backend.
 - **Booking links** — deep links to each hotel on Google, Booking.com, and Expedia for your dates.
 - **Directions** — Google Maps walk/drive links from your device's live location (open on your phone for the exact time you'd see in the app). Free, no key.
 - **Hotels only** — vacation-rental / aggregator listings that Google Hotels mixes in are filtered out by default (`--include-rentals` to keep them).
@@ -48,6 +49,16 @@ It prints the output path; open the `dashboard.html` it names.
 - `--no-route` skips walk/drive routing (faster; straight-line distance only).
 
 The dashboard's walk/drive times come from the free OSRM server and, from an accurately geocoded start, match Google Maps within a couple of minutes. For the exact Google time from where you are *right now*, tap a 🚶/🚗 **Maps** link in any row.
+
+### Rebuild a saved run for free (no API credits)
+
+Every search saves its raw data (`search.json`, `raw.json`) **and a `run.json` recipe** (geocoded start coordinates + params) into the run folder. To regenerate the dashboard later — e.g. after a UI change — point `--rebuild` at that folder. It reads the saved data and rebuilds with **zero geocode/search calls**:
+
+```bash
+uv run scripts/hotel_compare.py --rebuild runs/hotel-search/2026-06-16-downtown-sunnyvale
+```
+
+Only the original search (one search + one geocode call) costs SerpAPI credits. Rebuilds are free — they only re-run local work and the free OSRM routing.
 
 <details>
 <summary>Run the steps manually (geocode → search → dashboard)</summary>

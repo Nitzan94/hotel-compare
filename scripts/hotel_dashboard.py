@@ -296,6 +296,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <header class="mb-6">
     <h1 id="h-title" class="text-2xl font-bold text-slate-900"></h1>
     <p id="h-sub" class="text-sm text-slate-500 mt-1"></p>
+    <div class="flex flex-wrap gap-2 mt-3">
+      <a id="share-wa" target="_blank" rel="noopener" class="ota bg-green-600 text-white hover:opacity-80">WhatsApp</a>
+      <a id="share-mail" class="ota bg-blue-600 text-white hover:opacity-80">Email</a>
+      <button id="share-copy" class="ota bg-slate-600 text-white hover:opacity-80">Copy list</button>
+      <button id="share-csv" class="ota bg-slate-600 text-white hover:opacity-80">Download CSV</button>
+    </div>
   </header>
 
   <section id="cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"></section>
@@ -470,6 +476,7 @@ const getVal=(r,k)=>{
   return r[k];
 };
 let sortKey='dist:'+M.starts[0].label, sortDir=1;
+let lastSorted=ROWS;  // the table's current sort order, reused by the share/export buttons
 function buildCols(){
   const cols=[{k:'_cmp',label:'',align:'left',nosort:true},{k:'name',label:'Hotel',align:'left'}];
   M.starts.forEach(s=>cols.push({k:'dist:'+s.label,label:s.label.split('(')[0].trim()+' (mi)',num:true}));
@@ -490,6 +497,7 @@ function render(){
   const sorted=[...ROWS].sort((a,b)=>{let va=getVal(a,sortKey),vb=getVal(b,sortKey);
     if(typeof va==='string'||typeof vb==='string'){return ((va||'')+'').localeCompare((vb||'')+'')*sortDir;}
     va=va==null?Infinity*sortDir:va; vb=vb==null?Infinity*sortDir:vb; return (va-vb)*sortDir;});
+  lastSorted=sorted;
   const badgeColor={cheapest:'bg-emerald-100 text-emerald-700','best-value':'bg-indigo-100 text-indigo-700',closest:'bg-blue-100 text-blue-700','top-rated':'bg-amber-100 text-amber-700'};
   document.getElementById('tbody').innerHTML=sorted.map((r,i)=>{
     const badges=(r.badges||[]).map(b=>`<span class="badge ${badgeColor[b]||'bg-slate-100 text-slate-600'}">${b}</span>`).join(' ');
@@ -565,6 +573,65 @@ function renderCompare(){
   html+=`</tbody>`;
   document.getElementById('cmp-table').innerHTML=html;
 }
+
+// ---- share / export (all client-side, no backend) ----
+// Terse one line per hotel for WhatsApp/email (URL-length-bounded channels).
+function shareLine(r,i){
+  const bits=[fmt(pn(r))+'/night'];
+  const d=pdistMi(r); if(d!=null) bits.push(d+'mi');
+  const wk=(r.route&&r.route.walk)||{}; if(M.routed&&wk.min!=null) bits.push(wk.min+'min walk');
+  if(r.rating!=null) bits.push(r.rating+'★');
+  return `${i+1}. ${r.name} — ${bits.join(' · ')}`;
+}
+function shareText(){
+  const head=`Hotels — ${M.location.replace(/\b\w/g,c=>c.toUpperCase())} (${lastSorted.length} hotels)\n`
+    +`${M.check_in} → ${M.check_out} (${M.nights} nights) · from ${pStart}`;
+  const body=lastSorted.map((r,i)=>shareLine(r,i)).join('\n');
+  return `${head}\n\n${body}\n\nSource: Google Hotels via SerpAPI`;
+}
+function refreshShare(){
+  const txt=shareText();
+  document.getElementById('share-wa').href='https://wa.me/?text='+enc(txt);
+  document.getElementById('share-mail').href=
+    'mailto:?subject='+enc(`Hotels — ${M.location} (${M.check_in}–${M.check_out})`)+'&body='+enc(txt);
+}
+document.getElementById('share-copy').onclick=async()=>{
+  try{ await navigator.clipboard.writeText(shareText());
+    const b=document.getElementById('share-copy'), t=b.textContent; b.textContent='Copied ✓';
+    setTimeout(()=>b.textContent=t,1500);
+  }catch(e){ alert('Copy failed: '+e.message); }
+};
+// CSV regenerated from embedded DATA so the HTML is self-contained when shared alone.
+function csvText(){
+  const esc=v=>{v=v==null?'':''+v; return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const head=['name','stars','rating','reviews'];
+  M.starts.forEach(s=>head.push(`dist_mi (${s.label})`));
+  if(M.routed) head.push('walk_min','walk_mi','drive_min');
+  M.party_labels.forEach(lb=>head.push(`${lb} $/night`,`${lb} total (${M.nights}n)`));
+  head.push('value_score','badges','lat','lon','link');
+  const lines=[head.map(esc).join(',')];
+  lastSorted.forEach(r=>{
+    const row=[r.name,r.stars,r.rating,r.reviews];
+    M.starts.forEach(s=>row.push(distMi(r,s.label)));
+    if(M.routed){const wk=(r.route&&r.route.walk)||{},dv=(r.route&&r.route.drive)||{};
+      row.push(wk.min,wk.mi,dv.min);}
+    M.party_labels.forEach(lb=>{const p=r.prices[lb]||{};row.push(p.per_night,p.total);});
+    row.push(r.value_score,(r.badges||[]).join('|'),r.lat,r.lon,r.link);
+    lines.push(row.map(esc).join(','));
+  });
+  return lines.join('\n');
+}
+document.getElementById('share-csv').onclick=()=>{
+  const blob=new Blob([csvText()],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=`hotels-${M.location.replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+const _origRender=render;
+render=function(){_origRender();refreshShare();};  // keep share links in sync with the current sort
 render();
 </script>
 </body>
